@@ -63,8 +63,27 @@ def afficher_grille(X, y, n=10):
     plt.show()
 
 
-'''afficher_grille(X_train, y_train)
 
+
+
+afficher_grille(X_train, y_train)
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report
+
+# ── 5. Entraînement ─────────────────────────────────────────
+model = LogisticRegression(max_iter=1000)
+
+model.fit(X_train, y_train)
+
+# ── 6. Prédictions ──────────────────────────────────────────
+y_pred = model.predict(X_test)
+
+# ── 7. Évaluation ───────────────────────────────────────────
+print("Accuracy :", accuracy_score(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+
+'''
 # ── 5. Si vous utilisez vos propres fichiers PNG (comme le vôtre) ───────────
 chemin = "GROUPS\mnist_v5_MNIST-1_00001-01000_25x40.png"
 X_groupe = charger_grille(chemin, n_cols=40, n_rows=25)
