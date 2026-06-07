@@ -1,45 +1,11 @@
-"""
-============================================================
-  PROJET SM604 — PARTIE 2 : Classification CIFAR-10
-  Réseaux de Neurones Convolutifs — EFREI Paris, 2025-2026
-============================================================
-
-Ce fichier implémente intégralement la Partie 2 du projet :
-
-  ── Section A : Travail préliminaire ──────────────────────
-    A1. Chargement & visualisation de CIFAR-10
-    A2. Conversion niveaux de gris (formule pondérée)
-    A3. MLP linéaire & couches cachées sur images grises (1024 entrées)
-    A4. MLP sur images couleur aplaties (3072 entrées)
-    A5. Tableau comparatif avec la littérature scientifique
-
-  ── Section B : Filtres de convolution (2.3.2) ───────────
-    B1. Implémentation manuelle de la convolution 2D (zero-padding)
-    B2. Application des 6 filtres K1…K6 sur image en N&B
-    B3. Visualisation des feature maps
-
-  ── Section C : CNN (Option B — PyTorch) ─────────────────
-    C1. Architecture complète : Conv→Conv→Pool→Conv→Pool→Conv→Flatten→Dense
-    C2. Entraînement par rétropropagation automatique (Autograd)
-    C3. Évaluation & comparaison avec les résultats précédents
-
-INSTRUCTIONS :
-  pip install numpy matplotlib torch torchvision scikit-learn pillow
-  python partie2_CIFAR10.py
-"""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 0. IMPORTS
-# ─────────────────────────────────────────────────────────────────────────────
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import warnings
 warnings.filterwarnings("ignore")
-
 np.random.seed(42)
 
-# ─── Vérification PyTorch ────────────────────────────────────────────────────
+#PyTorch
 try:
     import torch
     import torch.nn as nn
@@ -55,36 +21,16 @@ except ImportError:
     print("⚠  PyTorch non installé → Section C (CNN) désactivée.")
     print("   pip install torch torchvision")
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PARTIE A — TRAVAIL PRÉLIMINAIRE : MLP SUR CIFAR-10
-# ═════════════════════════════════════════════════════════════════════════════
-
-# ─────────────────────────────────────────────────────────────────────────────
-# A1. Chargement de CIFAR-10
-# ─────────────────────────────────────────────────────────────────────────────
-
+#MLP SUR CIFAR-10
+#Chargement CIFAR-10
 CIFAR10_CLASSES = [
     "avion", "automobile", "oiseau", "chat", "cerf",
     "chien", "grenouille", "cheval", "bateau", "camion"
 ]
 
 def load_cifar10_numpy():
-    """
-    Charge CIFAR-10 via torchvision et le convertit en tableaux NumPy.
-
-    Format brut torchvision : tenseurs (N, 3, 32, 32) uint8 normalisés [0,1].
-    On transpose en (N, 32, 32, 3) pour rester cohérent avec la convention
-    (hauteur, largeur, canaux) habituelle en traitement d'images.
-
-    Retourne :
-      X_train : (50000, 32, 32, 3)  float32  ∈ [0, 1]
-      y_train : (50000,)            int
-      X_test  : (10000, 32, 32, 3)  float32  ∈ [0, 1]
-      y_test  : (10000,)            int
-    """
     print("Chargement de CIFAR-10... (téléchargement automatique si absent)")
-    transform = transforms.ToTensor()   # → (3, 32, 32) float32 ∈ [0,1]
+    transform = transforms.ToTensor()
 
     train_set = torchvision.datasets.CIFAR10(
         root="./data", train=True,  download=True, transform=transform)
@@ -94,7 +40,6 @@ def load_cifar10_numpy():
     def dataset_to_numpy(ds):
         loader = DataLoader(ds, batch_size=len(ds), shuffle=False)
         X_t, y_t = next(iter(loader))
-        # (N, 3, H, W) → (N, H, W, 3)
         X = X_t.numpy().transpose(0, 2, 3, 1).astype(np.float32)
         y = y_t.numpy()
         return X, y
@@ -105,9 +50,8 @@ def load_cifar10_numpy():
     print(f"  ✓ Train : {X_train.shape}  | Test : {X_test.shape}")
     return X_train, y_train, X_test, y_test
 
-
 def visualize_cifar10(X, y, n_per_class=8):
-    """Affiche n_per_class exemples pour chacune des 10 classes."""
+    """Affiche n_per_class exemples pour 10 classes"""
     fig, axes = plt.subplots(10, n_per_class, figsize=(n_per_class * 1.3, 14))
     for cls in range(10):
         idx = np.where(y == cls)[0][:n_per_class]
@@ -122,84 +66,47 @@ def visualize_cifar10(X, y, n_per_class=8):
     plt.savefig("cifar10_samples.png", dpi=100, bbox_inches="tight")
     plt.show()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# A2. Conversion niveaux de gris & aplatissement
-# ─────────────────────────────────────────────────────────────────────────────
-
 def rgb_to_grayscale(X_rgb):
-    """
-    Convertit des images RGB en niveaux de gris selon la formule standard :
-
-        x_j = 0.299·R_j + 0.587·G_j + 0.114·B_j
-
-    Ces coefficients sont issus de la norme ITU-R BT.601.
-    Ils pondèrent la sensibilité de l'œil humain aux trois couleurs :
-    l'œil est plus sensible au vert (0.587) qu'au rouge (0.299) et encore
-    moins au bleu (0.114).
-
-    Paramètres :
-      X_rgb : (N, 32, 32, 3)
-    Retourne :
-      X_gray : (N, 32, 32)   float32
-    """
+    """Convertit des images RGB en niveaux de gris (formule standard)"""
     w = np.array([0.299, 0.587, 0.114], dtype=np.float32)
-    return (X_rgb * w).sum(axis=-1)   # (N, 32, 32)
-
+    return (X_rgb * w).sum(axis=-1)
 
 def flatten_images(X):
-    """
-    Aplatit chaque image en vecteur ligne.
-    (N, H, W)    → (N, H*W)
-    (N, H, W, C) → (N, H*W*C)
-    """
+    """Aplatit chaque image en vecteur ligne."""
     return X.reshape(X.shape[0], -1).astype(np.float32)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# A3 & A4. Réutilisation du MLP de la Partie 1
-#          (copié ici pour rendre ce fichier autonome)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def softmax(O):
-    """Softmax numériquement stable (soustraction du max ligne à ligne)."""
+    """Softmax (soustraction du max ligne à ligne)"""
     O_s = O - O.max(axis=1, keepdims=True)
     E = np.exp(O_s)
     return E / E.sum(axis=1, keepdims=True)
 
-
 def cross_entropy(P, Y, eps=1e-12):
     return -np.mean(np.sum(Y * np.log(P + eps), axis=1))
-
 
 def one_hot(y, K=10):
     Y = np.zeros((len(y), K), dtype=np.float32)
     Y[np.arange(len(y)), y] = 1.0
     return Y
 
-
 def relu(z):    return np.maximum(0.0, z)
 def relu_d(z):  return (z > 0).astype(np.float32)
 
-
 class MLP:
-    """
-    Perceptron multi-couches générique (identique à la Partie 1).
-    Paramètres :
-      layer_sizes : ex. [1024, 256, 10] pour H=1 couche cachée sur images grises
-                        [3072, 256, 10] pour H=1 couche cachée sur images couleur
-    """
+    """Perceptron multi-couches
+      layer_sizes un truc genre [1024, 256, 10] pour H=1 couche cachée sur images grises
+      [3072, 256, 10] pour H=1 couche cachée sur images couleur"""
     def __init__(self, layer_sizes):
         self.sizes = layer_sizes
         self.L     = len(layer_sizes) - 1
-        # Initialisation He : std = sqrt(2/fan_in)
+        #Initialisation He
         self.W = [np.random.randn(layer_sizes[l+1], layer_sizes[l]).astype(np.float32)
                   * np.sqrt(2.0 / layer_sizes[l])
                   for l in range(self.L)]
         self.b = [np.zeros(layer_sizes[l+1], dtype=np.float32) for l in range(self.L)]
 
     def forward(self, X):
-        """Forward pass avec mise en cache (nécessaire pour backprop)."""
+        """Forward pass avec mise en cache (nécessaire pour backprop)"""
         cache, z = [], X
         for l in range(self.L):
             zp = z
@@ -213,19 +120,7 @@ class MLP:
         return np.argmax(P, axis=1)
 
     def backward(self, cache, Y):
-        """
-        Rétropropagation du gradient.
-
-        Couche de sortie (softmax + cross-entropy) :
-          δ_out = (P - Y) / n
-
-        Couche l (ReLU) :
-          δ_l = (δ_{l+1} @ W_{l+1}) ⊙ ReLU'(o_l)
-
-        Gradients :
-          ∂L/∂W_l = δ_l^T @ z_{l-1}
-          ∂L/∂b_l = mean(δ_l, axis=0)
-        """
+        """Rétropropagation du gradient"""
         n = Y.shape[0]
         gW = [None] * self.L
         gb = [None] * self.L
@@ -242,7 +137,7 @@ class MLP:
 
     def train(self, X_tr, Y_tr, X_te, y_te,
               lr=0.05, epochs=30, batch=256, verbose=True):
-        """Mini-batch SGD."""
+        """Mini-batch SGD"""
         n = X_tr.shape[0]
         y_tr_lbl = np.argmax(Y_tr, axis=1)
         hist = {"loss": [], "train_err": [], "test_err": []}
@@ -269,11 +164,6 @@ class MLP:
                       f"Err Train={te*100:.1f}% | Err Test={vae*100:.1f}%")
         return hist
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# A5. Tableau de comparaison avec la littérature
-# ─────────────────────────────────────────────────────────────────────────────
-
 STATE_OF_ART = [
     ("Conv. Deep Belief Nets",            21.1, "août 2010"),
     ("Maxout Networks",                    9.38, "févr. 2013"),
@@ -284,10 +174,8 @@ STATE_OF_ART = [
 ]
 
 def print_full_comparison(our_results):
-    """
-    Affiche un tableau récapitulatif complet :
-    nos résultats + état de l'art de la littérature.
-    """
+    """Affiche un tableau récapitulatif complet
+    nos résultats + état"""
     print("\n" + "═"*62)
     print("  COMPARAISON AVEC LA LITTÉRATURE — CIFAR-10")
     print("═"*62)
@@ -305,66 +193,24 @@ def print_full_comparison(our_results):
     print("    que nos modèles basiques n'implémentent pas.")
     print("═"*62)
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PARTIE B — FILTRES DE CONVOLUTION (implémentation manuelle, section 2.3)
-# ═════════════════════════════════════════════════════════════════════════════
-
-# ─────────────────────────────────────────────────────────────────────────────
-# B1. Convolution 2D avec zero-padding (image N&B)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def convolve2d(image, K, bias=0.0):
-    """
-    Convolution 2D avec zero-padding, taille de sortie identique à l'entrée.
-
-    Formule du sujet (section 2.3.1) :
-        m'_{u,v} = Σ_{u'=1}^{3} Σ_{v'=1}^{3}  K_{u',v'} · m_{u'+u-2, v'+v-2}  + l
-
-    Implémentation :
-      1. On ajoute une bordure de 1 zéro tout autour de l'image (zero-padding).
-         Cela permet de calculer m'_{u,v} même pour les pixels de bord,
-         car les pixels hors bord valent 0.
-      2. Pour chaque pixel (u, v) de l'image de sortie, on extrait le patch
-         3×3 centré sur (u, v) dans l'image paddée et on fait le produit
-         scalaire avec le filtre K (+ biais).
-
-    Complexité : O(H × W × 9) — linéaire en nombre de pixels.
-
-    Paramètres :
-      image : (H, W)  numpy array (niveaux de gris, float32)
-      K     : (3, 3)  filtre
-      bias  : scalaire (l dans la formule)
-    Retourne :
-      out   : (H, W)  image filtrée (feature map)
-    """
     H, W   = image.shape
-    kH, kW = K.shape          # 3, 3
-    pH, pW = kH // 2, kW // 2  # padding = 1
+    kH, kW = K.shape
+    pH, pW = kH // 2, kW // 2 #padding=1
 
-    # Zero-padding : ajoute une bordure de 0 (1 pixel tout autour)
+    #Ajoute une bordure de 0 (1 pixel tout autour)
     padded = np.pad(image, ((pH, pH), (pW, pW)), mode="constant", constant_values=0)
 
-    # Convolution : produit scalaire filtre × patch pour chaque pixel
+    #Convolution (produit scalaire filtre*patch pour chaque pixel)
     out = np.zeros((H, W), dtype=np.float32)
     for u in range(H):
         for v in range(W):
-            patch = padded[u:u+kH, v:v+kW]    # patch 3×3
+            patch = padded[u:u+kH, v:v+kW] #patch=3×3
             out[u, v] = np.sum(K * patch) + bias
-
     return out
 
-
 def convolve2d_fast(image, K, bias=0.0):
-    """
-    Version vectorisée de la convolution 2D (bien plus rapide grâce à NumPy).
-
-    Au lieu de boucler pixel par pixel, on extrait toutes les colonnes du
-    patch simultanément en utilisant la technique des "stride tricks" ou
-    une simple boucle sur les 9 positions du filtre.
-    Ici on utilise une boucle sur les positions (u', v') du filtre
-    (9 itérations seulement au lieu de H×W).
-    """
+    """Version vectorisée de la convolution 2D"""
     H, W   = image.shape
     kH, kW = K.shape
     pH     = kH // 2
@@ -372,12 +218,9 @@ def convolve2d_fast(image, K, bias=0.0):
     out    = np.zeros((H, W), dtype=np.float32)
     for du in range(kH):
         for dv in range(kW):
-            # Contribution du coefficient K[du, dv] à tous les pixels en parallèle
             out += K[du, dv] * padded[du:du+H, dv:dv+W]
     return out + bias
 
-
-# Définition des 6 filtres du sujet (section 2.3.2)
 FILTERS = {
     "K1 — Moyenne (lissage)": np.array([[1,1,1],[1,1,1],[1,1,1]], dtype=np.float32) / 9.0,
 
@@ -407,18 +250,12 @@ FILTER_DESC = {
         "Effet d'embossage : simule un relief\néclairé depuis le coin supérieur gauche.",
 }
 
-
 def apply_and_visualize_filters(image_gray, clip=True):
-    """
-    Applique les 6 filtres du sujet sur une image en N&B et affiche les résultats.
 
-    Chaque feature map est renormalisée dans [0, 1] pour l'affichage
-    (clip + normalisation min-max).
-    """
     fig, axes = plt.subplots(2, 4, figsize=(16, 8))
     axes = axes.flatten()
 
-    # Image originale
+    #Image originale
     axes[0].imshow(image_gray, cmap="gray", vmin=0, vmax=1)
     axes[0].set_title("Image originale", fontweight="bold", fontsize=11)
     axes[0].axis("off")
@@ -427,7 +264,7 @@ def apply_and_visualize_filters(image_gray, clip=True):
         fm = convolve2d_fast(image_gray, K, bias=0.0)
         if clip:
             fm = np.clip(fm, 0, 1)
-        # Normalisation min-max pour l'affichage
+        #Normalisation min-max
         fmin, fmax = fm.min(), fm.max()
         if fmax > fmin:
             fm_disp = (fm - fmin) / (fmax - fmin)
@@ -439,7 +276,6 @@ def apply_and_visualize_filters(image_gray, clip=True):
                               ha="left", x=0.0)
         axes[i+1].axis("off")
 
-    # Masquer la 8e case (on a 6 filtres + 1 originale = 7)
     axes[7].axis("off")
 
     fig.suptitle("Effets des 6 filtres de convolution (section 2.3.2)",
@@ -447,192 +283,81 @@ def apply_and_visualize_filters(image_gray, clip=True):
     plt.tight_layout()
     plt.savefig("convolution_filters.png", dpi=120, bbox_inches="tight")
     plt.show()
-    print("  ✓ Visualisation sauvegardée : convolution_filters.png")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# B2. Convolution sur image couleur (section 2.3.3)
-# ─────────────────────────────────────────────────────────────────────────────
+    print("OK Visualisation sauvegardée : convolution_filters.png")
 
 def convolve_color(image_rgb, K_R, K_G, K_B, bias=0.0):
-    """
-    Convolution sur une image couleur RGB avec trois filtres séparés.
-
-    Formule du sujet (section 2.3.3) :
-      m'_{u,v} = Σ K^(R)_{u',v'} · m^(R) + Σ K^(G)_{u',v'} · m^(G)
-               + Σ K^(B)_{u',v'} · m^(B) + l
-
-    Les trois canaux sont traités séparément puis sommés →
-    la sortie est une seule feature map 2D (N&B).
-
-    Paramètres :
-      image_rgb : (H, W, 3)  image couleur
-      K_R, K_G, K_B : (3, 3) filtres pour chaque canal
-    Retourne :
-      out : (H, W) feature map
-    """
+    """Convolution sur une image couleur RGB avec trois filtres séparés"""
     R = convolve2d_fast(image_rgb[:, :, 0], K_R)
     G = convolve2d_fast(image_rgb[:, :, 1], K_G)
     B = convolve2d_fast(image_rgb[:, :, 2], K_B)
     return R + G + B + bias
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PARTIE C — CNN (PyTorch, Option B, section 2.6.2)
-# ═════════════════════════════════════════════════════════════════════════════
-
 if True:
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # C1. Architecture CNN conforme au sujet (section 2.5)
-    # ─────────────────────────────────────────────────────────────────────────
-
     class CIFAR10_CNN(nn.Module):
-        """
-        Architecture convolutive exacte décrite dans la section 2.5 du sujet.
-
-        Flux des données :
-        ──────────────────────────────────────────────────────────────────
-        Entrée    : (N, 3, 32, 32)   image couleur normalisée
-
-        Conv1     : 64 filtres 3×3, padding=1 → (N, 64, 32, 32)
-          Paramètres : 64 × (3×3×3 + 1) = 1 792
-          → Chaque filtre est un parallélépipède 3×3×3 (un canal par couleur)
-          → 64 feature maps de même taille que l'entrée (grâce au padding)
-
-        Conv2     : 64 filtres 3D 3×3×64, padding=1 → (N, 64, 32, 32)
-          Paramètres : 64 × (3×3×64 + 1) = 36 928
-          → Chaque filtre combine les 64 feature maps de Conv1
-
-        MaxPool1  : 2×2 stride=2 → (N, 64, 16, 16)
-          Pas de paramètre. Réduit la résolution spatiale ÷ 2.
-
-        Conv3     : 64 filtres 3D 3×3×64, padding=1 → (N, 64, 16, 16)
-          Paramètres : 64 × (3×3×64 + 1) = 36 928
-
-        MaxPool2  : 2×2 stride=2 → (N, 64, 8, 8)
-
-        Conv4     : 64 filtres 3D 3×3×64, padding=1 → (N, 64, 8, 8)
-          Paramètres : 64 × (3×3×64 + 1) = 36 928
-
-        Flatten   : (N, 64×8×8) = (N, 4096)
-
-        FC (Dense): 4096 → 10 (Softmax implicite dans CrossEntropyLoss)
-          Paramètres : 4096 × 10 + 10 = 40 970
-
-        Total paramètres entraînables : ~153 546
-        ──────────────────────────────────────────────────────────────────
-
-        Remarque sur ReLU :
-          On applique ReLU après chaque convolution (et après FC).
-          ReLU introduit la non-linéarité indispensable pour que le réseau
-          apprenne des représentations complexes.
-          Sans activation, empiler des convolutions resterait linéaire.
-
-        Remarque sur le padding :
-          padding=1 avec kernel_size=3 conserve la taille spatiale de l'image,
-          conformément à la formule du sujet (les images restent 32×32 après
-          chaque convolution, avant le pooling).
-        """
-
+        """Architecture convolutive"""
         def __init__(self, num_classes=10):
             super().__init__()
 
-            # ── Couche 1 : Convolution couleur (section 2.5.2) ──────────────
-            # in_channels=3 (RGB) | out_channels=64 filtres | kernel=3×3
+            #Couche 1 Convolution couleur
             self.conv1 = nn.Conv2d(3,  64, kernel_size=3, padding=1)
 
-            # ── Couche 2 : Convolution 3D (section 2.5.3) ───────────────────
-            # in_channels=64 (profondeur de l'entrée = 64 feature maps)
+            #Couche 2 Convolution 3D
             self.conv2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
 
-            # ── MaxPooling 1 (section 2.5.4) ─────────────────────────────────
-            # 32×32 → 16×16
+            #MaxPooling 1
             self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
 
-            # ── Couche 3 : Convolution 3D ────────────────────────────────────
+            #Couche 3 Convolution 3D_2
             self.conv3 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
 
-            # ── MaxPooling 2 (section 2.5.5) ──────────────────────────────────
-            # 16×16 → 8×8
+            #MaxPooling 2
             self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
 
-            # ── Couche 4 : Convolution 3D finale ─────────────────────────────
+            #Couche 4 Convolution 3D finale
             self.conv4 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
 
-            # ── Aplatissement + Densification (section 2.4.3 & 2.5.5) ────────
-            # 8×8×64 = 4096 → 10 classes
+            #Aplatissement + Densification
             self.fc = nn.Linear(64 * 8 * 8, num_classes)
 
             self.relu = nn.ReLU()
 
         def forward(self, x):
-            """
-            Passe avant (forward pass).
-
-            À chaque étape, on peut lire les dimensions entre parenthèses
-            pour une image seule (batch_size=1) ou un batch de N images.
-
-            x : (N, 3, 32, 32)
-            """
-            # Conv1 + ReLU : (N, 3, 32, 32) → (N, 64, 32, 32)
+            """forward pass"""
+            #Conv1 + ReLU
             x = self.relu(self.conv1(x))
 
-            # Conv2 + ReLU : (N, 64, 32, 32) → (N, 64, 32, 32)
+            #Conv2 + ReLU
             x = self.relu(self.conv2(x))
 
-            # MaxPool1 : (N, 64, 32, 32) → (N, 64, 16, 16)
+            #MaxPool1
             x = self.pool1(x)
 
-            # Conv3 + ReLU : (N, 64, 16, 16) → (N, 64, 16, 16)
+            #Conv3 + ReLU
             x = self.relu(self.conv3(x))
 
-            # MaxPool2 : (N, 64, 16, 16) → (N, 64, 8, 8)
+            #MaxPool2
             x = self.pool2(x)
 
-            # Conv4 + ReLU : (N, 64, 8, 8) → (N, 64, 8, 8)
+            #Conv4 + ReLU
             x = self.relu(self.conv4(x))
 
-            # Aplatissement : (N, 64, 8, 8) → (N, 4096)
+            #Aplatissement
             x = torch.flatten(x, 1)
 
-            # Dense : (N, 4096) → (N, 10)  [logits, softmax dans la loss]
+            #Dense (logits, softmax dans la loss)
             x = self.fc(x)
             return x
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # C2. Entraînement du CNN
-    # ─────────────────────────────────────────────────────────────────────────
-
+    # Train
     def train_cnn(epochs=20, lr=0.001, batch_size=128):
-        """
-        Entraînement du CNN sur CIFAR-10 avec PyTorch (Option B du sujet).
 
-        Chargement via torchvision avec normalisation standard :
-          mean=(0.4914, 0.4822, 0.4465), std=(0.2470, 0.2435, 0.2616)
-          → soustrait la moyenne et divise par l'écart-type canal par canal
-          → les activations restent dans une plage numériquement favorable
-
-        Optimiseur : Adam (adaptatif, convergence plus rapide que SGD)
-        Loss       : CrossEntropyLoss = LogSoftmax + NLLLoss
-                     (softmax intégré → pas besoin de l'appliquer dans forward)
-
-        Rétropropagation automatique (Autograd) :
-          loss.backward() → calcule ∂L/∂θ pour tous les paramètres θ
-          optimizer.step() → applique la mise à jour θ ← θ - lr·∂L/∂θ
-
-        Retourne :
-          model   : modèle entraîné
-          history : dict avec loss, train_err, test_err
-        """
         print("\nChargement CIFAR-10 (format PyTorch avec normalisation)...")
 
-        # Normalisation : µ et σ calculés sur le jeu d'entraînement CIFAR-10
+        #Normalisation (calculés sur le jeu d'entraînement CIFAR-10)
         mean = (0.4914, 0.4822, 0.4465)
         std  = (0.2470, 0.2435, 0.2616)
 
         transform_train = transforms.Compose([
-            transforms.RandomHorizontalFlip(),      # data augmentation légère
+            transforms.RandomHorizontalFlip(), #data augmentation légère
             transforms.RandomCrop(32, padding=4),
             transforms.ToTensor(),
             transforms.Normalize(mean, std),
@@ -656,32 +381,32 @@ if True:
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(model.parameters(), lr=lr)
 
-        # Compte les paramètres
+        #Compte les paramètres
         total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"  Nombre de paramètres entraînables : {total_params:,}")
 
         history = {"loss": [], "train_err": [], "test_err": []}
 
         for epoch in range(epochs):
-            # ── Phase d'entraînement ──────────────────────────────────────
+            #Phase train
             model.train()
             ep_loss, correct_tr, total_tr = 0.0, 0, 0
 
             for Xb, yb in train_loader:
                 Xb, yb = Xb.to(device), yb.to(device)
 
-                optimizer.zero_grad()       # réinitialise les gradients accumulés
-                logits = model(Xb)          # forward
-                loss   = criterion(logits, yb)  # cross-entropy
-                loss.backward()             # rétropropagation (Autograd)
-                optimizer.step()            # mise à jour des poids
+                optimizer.zero_grad()
+                logits = model(Xb)
+                loss   = criterion(logits, yb) #cross-entropy
+                loss.backward()
+                optimizer.step()
 
                 ep_loss   += loss.item()
                 preds      = logits.argmax(dim=1)
                 correct_tr += (preds == yb).sum().item()
                 total_tr   += yb.size(0)
 
-            # ── Phase d'évaluation ────────────────────────────────────────
+            #Phase évaluation
             model.eval()
             correct_te, total_te = 0, 0
             with torch.no_grad():
@@ -705,13 +430,10 @@ if True:
 
         return model, history
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Visualisations communes
-# ─────────────────────────────────────────────────────────────────────────────
+#Visualisations communes
 
 def plot_curves(histories, labels, title="Courbes d'entraînement — CIFAR-10"):
-    """Compare les courbes de perte et d'erreur de plusieurs modèles."""
+    """Compare les courbes de perte et d'erreur"""
     colors = ["#1D4ED8", "#B91C1C", "#15803D", "#7C3AED", "#D97706"]
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
     for h, lbl, c in zip(histories, labels, colors):
@@ -730,19 +452,10 @@ def plot_curves(histories, labels, title="Courbes d'entraînement — CIFAR-10")
     plt.savefig("cifar10_training_curves.png", dpi=100)
     plt.show()
 
-
 def visualize_cnn_feature_maps(model, X_sample, device):
-    """
-    Visualise les feature maps des 4 couches de convolution pour une image.
 
-    Permet de comprendre ce que "voit" le réseau à chaque niveau :
-    - Conv1 : détecteurs de bords, textures bas niveau
-    - Conv2 : combinaisons de bords → formes simples
-    - Conv3 : formes intermédiaires
-    - Conv4 : représentations sémantiques plus abstraites
-    """
     model.eval()
-    x = torch.tensor(X_sample).unsqueeze(0).to(device)  # (1, 3, 32, 32)
+    x = torch.tensor(X_sample).unsqueeze(0).to(device)
     activations = []
     hooks = []
 
@@ -765,7 +478,7 @@ def visualize_cnn_feature_maps(model, X_sample, device):
     for l, (act, name) in enumerate(zip(activations, layer_names)):
         for f in range(8):
             ax = axes[l, f]
-            fm = act[0, f]  # f-ième feature map
+            fm = act[0, f]
             ax.imshow(fm, cmap="viridis", aspect="auto")
             ax.axis("off")
         axes[l, 0].set_ylabel(name, fontsize=8, rotation=0, labelpad=80, va="center")
@@ -777,39 +490,30 @@ def visualize_cnn_feature_maps(model, X_sample, device):
     plt.show()
     print("  ✓ Feature maps sauvegardées : cnn_feature_maps.png")
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PROGRAMME PRINCIPAL
-# ═════════════════════════════════════════════════════════════════════════════
-
+#Prinp.
 if True:
 
     print("\n" + "═"*60)
     print("  PARTIE 2 — Classification CIFAR-10 + CNN")
     print("═"*60)
 
-    # ── Chargement ────────────────────────────────────────────────────────────
     print("\n[1] Chargement de CIFAR-10...")
     X_train_rgb, y_train, X_test_rgb, y_test = load_cifar10_numpy()
     visualize_cifar10(X_train_rgb, y_train)
 
-    all_results = []   # pour le tableau final
+    all_results = []
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── Section A2 : Conversion niveaux de gris ───────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
+    #Conversion niveaux de gris
     print("\n[2] Conversion en niveaux de gris (formule ITU-R)...")
-    X_train_gray = rgb_to_grayscale(X_train_rgb)  # (50000, 32, 32)
+    X_train_gray = rgb_to_grayscale(X_train_rgb)
     X_test_gray  = rgb_to_grayscale(X_test_rgb)
 
-    # Aplatissement → vecteurs 1024D
-    X_tr_flat_g  = flatten_images(X_train_gray)   # (50000, 1024)
+    #Aplatissement en vecteurs
+    X_tr_flat_g  = flatten_images(X_train_gray)
     X_te_flat_g  = flatten_images(X_test_gray)
     Y_tr         = one_hot(y_train)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── Section A3 : MLP sur images grises ───────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
+    #MLP sur images grises
     print("\n[3] MLP linéaire sur images grises (1024 → 10)...")
     print(f"    Paramètres : {1024*10 + 10:,}")
     lin_gray = MLP([1024, 10])
@@ -830,12 +534,10 @@ if True:
     all_results.append(("MLP H=1 niveaux de gris (→256→10)", err1_tr, err1_te))
     print(f"    → Train : {err1_tr*100:.1f}%  |  Test : {err1_te*100:.1f}%")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── Section A4 : MLP sur images couleur ──────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
+    #MLP sur images couleur
     print("\n[4] MLP sur images couleur (3072 → 10)...")
     print(f"    Paramètres : {3072*10 + 10:,}")
-    X_tr_flat_c = flatten_images(X_train_rgb)   # (50000, 3072)
+    X_tr_flat_c = flatten_images(X_train_rgb)
     X_te_flat_c = flatten_images(X_test_rgb)
 
     lin_color = MLP([3072, 10])
@@ -856,47 +558,41 @@ if True:
     all_results.append(("MLP H=1 couleur (→512→10)", err_mc_tr, err_mc_te))
     print(f"    → Train : {err_mc_tr*100:.1f}%  |  Test : {err_mc_te*100:.1f}%")
 
-    # Courbes comparatives MLP
+    #Courbes comparatives MLP
     plot_curves(
         [hist_lin_gray, hist_mlp1_gray, hist_lin_color, hist_mlp1_c],
         ["Linéaire gris", "MLP H=1 gris", "Linéaire couleur", "MLP H=1 couleur"],
         title="Comparaison MLP — CIFAR-10"
     )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── Section B : Filtres de convolution ────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
+    #Filtres de convolution
     print("\n[5] Application des filtres de convolution...")
-
-    # On prend une image de test (ex. un chat)
-    cat_idx = np.where(y_test == 3)[0][0]  # classe 3 = chat
-    img_rgb  = X_test_rgb[cat_idx]         # (32, 32, 3)
-    img_gray = X_test_gray[cat_idx]        # (32, 32)
+    #Test
+    cat_idx = np.where(y_test == 3)[0][0]
+    img_rgb  = X_test_rgb[cat_idx]
+    img_gray = X_test_gray[cat_idx]
 
     apply_and_visualize_filters(img_gray, clip=True)
 
-    # Vérification de la convolution (exemple K2 manuellement)
     fm_naive = convolve2d(img_gray, FILTERS["K2 — Sharpen (netteté)"])
     fm_fast  = convolve2d_fast(img_gray, FILTERS["K2 — Sharpen (netteté)"])
     max_diff = np.abs(fm_naive - fm_fast).max()
     print(f"  ✓ Vérification : diff max naïf vs vectorisé = {max_diff:.2e} (doit être ≈ 0)")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── Section C : CNN PyTorch ───────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
+    #CNN PyTorch
     if TORCH_AVAILABLE:
         print("\n[6] Entraînement du CNN (Option B — PyTorch)...")
         print("  Architecture : Conv(64)→Conv(64)→Pool→Conv(64)→Pool→Conv(64)→FC(10)")
         cnn_model, hist_cnn = train_cnn(epochs=20, lr=0.001, batch_size=128)
 
-        # Erreur finale CNN
+        #Erreur finale CNN
         cnn_model.eval()
         correct, total = 0, 0
         X_te_t = torch.tensor(
-            X_test_rgb.transpose(0,3,1,2),   # (N,H,W,C) → (N,C,H,W)
+            X_test_rgb.transpose(0,3,1,2),
             dtype=torch.float32
         ).to(device)
-        # Normalisation identique à l'entraînement
+        #Normalisation
         mean_t = torch.tensor([0.4914, 0.4822, 0.4465]).view(1,3,1,1).to(device)
         std_t  = torch.tensor([0.2470, 0.2435, 0.2616]).view(1,3,1,1).to(device)
         X_te_norm = (X_te_t - mean_t) / std_t
@@ -911,26 +607,24 @@ if True:
         all_results.append(("CNN (Conv×4 + Pool×2 + FC)", None, err_cnn_te))
         print(f"  → Err Test CNN : {err_cnn_te*100:.1f}%")
 
-        # Visualisation feature maps
+        #Visualisation feature maps
         visualize_cnn_feature_maps(
             cnn_model,
-            X_te_norm[cat_idx].cpu().numpy(),   # (3, 32, 32) normalisé
+            X_te_norm[cat_idx].cpu().numpy(),
             device
         )
 
-        # Courbes CNN
+        #Courbes CNN
         plot_curves([hist_cnn], ["CNN PyTorch"],
                     title="CNN — Courbes d'entraînement CIFAR-10")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ── Tableau final ─────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
+    #
+    #Tableau final
     print_full_comparison(all_results)
 
     print("""
-═══════════════════════════════════════════════════════════════════
-  ANALYSE & DISCUSSION — PARTIE 2
-───────────────────────────────────────────────────────────────────
+  ANALYSE & DISCUSSION - 2
+
   1. POURQUOI LES MLP SONT LIMITÉS SUR CIFAR-10 ?
      - Traiter les 3072 pixels comme un vecteur plat ignore la structure
        spatiale locale (voisinage, bords, textures).
@@ -964,5 +658,4 @@ if True:
   5. OVERFITTING
      Si err_train << err_test → sur-apprentissage.
      Solutions : dropout, L2 régularisation, data augmentation.
-═══════════════════════════════════════════════════════════════════
     """)

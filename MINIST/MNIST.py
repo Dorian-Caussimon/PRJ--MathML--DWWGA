@@ -451,9 +451,8 @@ if True :
     # Tableau récap
     print_comparison_table(results)
     print("""
-═══════════════════════════════════════════════════════════════
   ANALYSE & DISCUSSION
-───────────────────────────────────────────────────────────────
+  
   1. MODÈLE LINÉAIRE
      - Erreur test typique : ~8% (bon point de départ)
      - Limitation : séparabilité linéaire seulement.
@@ -479,5 +478,4 @@ if True :
      - Images centrées, fond uniforme, une seule classe par image
      - Pas de bruit de fond ni de variabilité de point de vue
      - 28×28 = 784 entrées seulement (vs 3072 pour CIFAR-10)
-═══════════════════════════════════════════════════════════════
     """)
